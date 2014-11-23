@@ -65,22 +65,63 @@ string name2write(string filePath){
     return rev_toret;
 }
 
+void edgeMap(Mat &img){
+    Mat img2;
+    GaussianBlur( img, img2, Size(3,3), 0, 0, BORDER_DEFAULT );
+    Mat img_g;
+    cvtColor(img2,img_g,CV_BGR2GRAY);
+    
+    int ddepth = CV_16S;
+    int scale = 1;
+    int delta = 0;
+    Mat grad_x, grad_y;
+    Mat abs_grad_x, abs_grad_y;
+    Mat grad;
+    Sobel(img_g, grad_x, ddepth, 1, 0, 3, scale, delta, BORDER_DEFAULT );
+    convertScaleAbs( grad_x, abs_grad_x );
+    Sobel(img_g, grad_y, ddepth, 0, 1, 3, scale, delta, BORDER_DEFAULT );
+    convertScaleAbs( grad_y, abs_grad_y );
+    addWeighted( abs_grad_x, 0.5, abs_grad_y, 0.5, 0, grad );
+    threshold(grad, grad,50, 255,0); 
+    int rs=img_g.rows,cs=img_g.cols;
+    int pixPerArea = (rs*cs)/(DIVISION*DIVISION);
+
+    int dr=rs/DIVISION;
+    int dc=cs/DIVISION; 
+    vector<Mat>edgeDivisionMap(DIVISION*DIVISION,Mat());
+    for(int i=0;i<DIVISION;i++){
+        for(int j=0;j<DIVISION;j++){
+           edgeDivisionMap[i*DIVISION+j] = grad(Range(i*dr,min(i*dr+dr,rs-1)),Range(j*dc,min(j*dc+dc,cs-1))).clone();
+        }
+    }
+    stringstream ss;
+    string winName="EDGE";
+    imshow("Main",grad);
+   // for(int i=0;i<DIVISION*DIVISION;i++){
+        //ss<<i;
+        //winName+=ss.str();
+        //imshow(winName.c_str(),edgeDivisionMap[i]);
+   // }
+        waitKey(0);
+}
 uint64_t BMFeatureExtractor(Mat &m1,Mat &m2){
     //int toIgnore = 0;
+    Mat m1f,m2f;
     Mat m1_g,m2_g;
+    //GaussianBlur(m1, m1f, Size( 5, 5), 0, 0 );
+    //GaussianBlur(m2, m2f, Size( 5,5), 0, 0 );
     cvtColor(m1,m1_g,CV_BGR2GRAY);
     cvtColor(m2,m2_g,CV_BGR2GRAY);
-
+    
     Mat sub;
     //cout<<m1.size()<<" "<<m2.size()<<endl;
-    /*  absdiff(m1_g,m2_g,sub);
-      imshow("m1",m1);
-      imshow("m2",m2);
+    /* absdiff(m1_g,m2_g,sub);
+      imshow("m1",m1f);
+      imshow("m2",m2f);
       imshow("sub",sub);
       waitKey(0);*/
     int rs=m1_g.rows,cs=m1_g.cols;
     int pixPerArea = (rs*cs)/(DIVISION*DIVISION);
-
     vector<int>diffCount(DIVISION*DIVISION,0);
     int dr=rs/DIVISION+1;
     int dc=cs/DIVISION+1; 
@@ -189,11 +230,12 @@ void processEpi(string epiName){
         bm_video>>frame;
         if(frame.empty())
             break;
-        if(frame_num!=0){
+        if(frame_num!=0 && frame_num>=38483){
             Mat re_frame;
             resize(frame,re_frame,Size(W,H));
             uint64_t val = BMFeatureExtractor(re_frame,prevFrame);
-            if(val!=0){
+            if(val!=0 && frame_num){
+            edgeMap(prevFrame);
             prevFrame = re_frame.clone();
             f<<prev_num<<" "<<val<<endl;
             prev_num=frame_num;
@@ -208,6 +250,7 @@ void processEpi(string epiName){
     cout<<"Frame in Video :"<<frame_num<<endl;
     f.close();
 }
+
 
 void processSVC(string svcName){
     VideoCapture svcVideo;
@@ -233,6 +276,7 @@ void processSVC(string svcName){
             prevFrame = frame.clone();
         }
         if(val!=0){
+            edgeMap(prevFrame);
             prevFrame = frame.clone();
             svcVector.push_back(frame);
             svcDescriptor.push_back(val);
@@ -360,9 +404,9 @@ void EpiSvcBMDistance(string epiName,string svcName){
         ss<<argv[3];
         ss>>DIVISION;
 
-         //     processEpi(epiName);
-              processSVC(svcName);
+             processSVC(svcName);
+             processEpi(epiName);
          //   testFunction(epiName);
-             EpiSvcBMDistance(epiName,svcName);
+         //    EpiSvcBMDistance(epiName,svcName);
         //viewSelection(epiName);
     }
