@@ -43,6 +43,16 @@ int DIVISION ;
 int scores2pick;
 int frameSkipWindow;
 
+vector<Mat>edgeTestSVC,edgeTestEPI;
+
+int counter = 0;
+string init="S";
+
+int eH=360;
+int eW=640;
+int sH=180;
+int sW=320;
+
 string name2write(string filePath){
     int l = filePath.size();
     cout<<"assuming path to be *.mpg or something\n";
@@ -65,12 +75,69 @@ string name2write(string filePath){
     return rev_toret;
 }
 
+void testEdgeCriteria(){
+    int s=edgeTestSVC.size(),e=edgeTestEPI.size();
+
+    Size sz = Size(128,128);
+    string E="E",S="S";
+    stringstream ss;
+    for(int i=0;i<s;i++){
+        ss.str("");
+        ss<<i;
+        string path = S+ss.str()+".png";
+        resize(edgeTestSVC[i],edgeTestSVC[i],sz,0,0,INTER_LINEAR);
+        imwrite(path.c_str(),edgeTestSVC[i]);
+        //imshow("svc",edgeTestSVC[i]);
+        // waitKey(0);
+    }
+    for(int i=0;i<e;i++){
+        ss.str("");
+        ss<<i;
+        string path = E+ss.str()+".png";
+        resize(edgeTestEPI[i],edgeTestEPI[i],sz,0,0,INTER_LINEAR);
+        imwrite(path.c_str(),edgeTestEPI[i]);
+        // imshow("epi",edgeTestEPI[i]);
+        // waitKey(0);
+    }
+}
+
+void opticalFlowHistogram(Mat image_prev_c, Mat image_next_c){
+    Mat image_prev,image_next;
+    cvtColor(image_prev_c,image_prev,CV_BGR2GRAY);
+    cvtColor(image_next_c,image_next,CV_BGR2GRAY);
+    vector<Point2f> features_next,features_prev;
+    int max_count = 100;
+    double quality= 0.2;
+    double minDist = 9.0;
+    int block = 3;
+    bool useHarrisDetector=true;
+    double k = 0.4;
+    std::vector<uchar> status;
+    std::vector<float> err;
+
+    cv::goodFeaturesToTrack(image_next,features_next,max_count,quality,minDist);
+    cv::goodFeaturesToTrack(image_prev,features_prev,max_count,quality,minDist);
+    cv::calcOpticalFlowPyrLK(image_prev, image_next,features_prev,features_next,status,err,Size(15,15));
+
+    cout<<features_prev.size()<<" "<<features_next.size()<<endl;
+
+    int sz = features_prev.size();
+    for(int i=0;i<sz;i++){
+        cout<<features_prev[i]<<" "<<features_next[i]<<endl;
+        circle(image_prev_c, features_prev[i],5, Scalar(255,0,0), 1, 8,0);
+        line(image_next_c,features_prev[i],features_next[i], Scalar(0,0,255),1,8,0);
+    }
+    imshow("Prev",image_prev_c);
+    imshow("FLOW",image_next_c);
+    waitKey(0);
+}
+
 void edgeMap(Mat &img){
     Mat img2;
     GaussianBlur( img, img2, Size(3,3), 0, 0, BORDER_DEFAULT );
     Mat img_g;
     cvtColor(img2,img_g,CV_BGR2GRAY);
-    
+
     int ddepth = CV_16S;
     int scale = 1;
     int delta = 0;
@@ -91,18 +158,21 @@ void edgeMap(Mat &img){
     vector<Mat>edgeDivisionMap(DIVISION*DIVISION,Mat());
     for(int i=0;i<DIVISION;i++){
         for(int j=0;j<DIVISION;j++){
-           edgeDivisionMap[i*DIVISION+j] = grad(Range(i*dr,min(i*dr+dr,rs-1)),Range(j*dc,min(j*dc+dc,cs-1))).clone();
+            edgeDivisionMap[i*DIVISION+j] = grad(Range(i*dr,min(i*dr+dr,rs-1)),Range(j*dc,min(j*dc+dc,cs-1))).clone();
         }
     }
-    stringstream ss;
-    string winName="EDGE";
-    imshow("Main",grad);
-   // for(int i=0;i<DIVISION*DIVISION;i++){
-        //ss<<i;
-        //winName+=ss.str();
-        //imshow(winName.c_str(),edgeDivisionMap[i]);
-   // }
-        waitKey(0);
+    if(init=="S")
+        edgeTestSVC.push_back(grad);
+    else
+        edgeTestEPI.push_back(grad);
+
+    // imshow("Main",grad);
+    // for(int i=0;i<DIVISION*DIVISION;i++){
+    //ss<<i;
+    //winName+=ss.str();
+    //imshow(winName.c_str(),edgeDivisionMap[i]);
+    // }
+    // waitKey(0);
 }
 uint64_t BMFeatureExtractor(Mat &m1,Mat &m2){
     //int toIgnore = 0;
@@ -112,14 +182,14 @@ uint64_t BMFeatureExtractor(Mat &m1,Mat &m2){
     //GaussianBlur(m2, m2f, Size( 5,5), 0, 0 );
     cvtColor(m1,m1_g,CV_BGR2GRAY);
     cvtColor(m2,m2_g,CV_BGR2GRAY);
-    
+
     Mat sub;
     //cout<<m1.size()<<" "<<m2.size()<<endl;
-    /* absdiff(m1_g,m2_g,sub);
-      imshow("m1",m1f);
-      imshow("m2",m2f);
-      imshow("sub",sub);
-      waitKey(0);*/
+    /*  absdiff(m1_g,m2_g,sub);
+        imshow("m1",m1);
+        imshow("m2",m2);
+        imshow("sub",sub);
+        waitKey(0);*/
     int rs=m1_g.rows,cs=m1_g.cols;
     int pixPerArea = (rs*cs)/(DIVISION*DIVISION);
     vector<int>diffCount(DIVISION*DIVISION,0);
@@ -129,7 +199,7 @@ uint64_t BMFeatureExtractor(Mat &m1,Mat &m2){
         for(int c=0;c<cs;c++){
             int val = abs(int(m1_g.at<uchar>(r,c) - int(m2_g.at<uchar>(r,c))));
             int section = (r/dr)*(DIVISION)+c/dc;
-            if(val>50)
+            if(val>10)
                 diffCount[section]++;
         }
     }
@@ -163,24 +233,24 @@ void testFunction(string epiName){
             break;
         if(frame_num>=epiStart && frame_num<=epiStart+epiLen &&frame_num%(frameSkipWindow-1)==0){
             cout<<frame_num<<endl;
-               imshow("frame",frame);
-               for(int i=0;i<svcVector.size();i++){
-                    imshow("svc",svcVector[i]);
-                    waitKey(20);
-               }
+            imshow("frame",frame);
+            for(int i=0;i<svcVector.size();i++){
+                imshow("svc",svcVector[i]);
+                waitKey(20);
+            }
         }
 
         if(frame_num>=epiStart-frameSkipWindow && frame_num<=epiStart+epiLen && frame_num%(frameSkipWindow-1)==0){
-           resize(frame,res_frame,Size(frame.cols/2,frame.rows/2));
-           epiVector.push_back(res_frame);
+            resize(frame,res_frame,Size(frame.cols/2,frame.rows/2));
+            epiVector.push_back(res_frame);
         }
         frame_num++;
     }
     for(int i=0;i<epiVector.size()-1;i++){
-            uint64_t val = BMFeatureExtractor(epiVector[i+1],epiVector[i]);
-            epiDescriptor.push_back(val);
+        uint64_t val = BMFeatureExtractor(epiVector[i+1],epiVector[i]);
+        epiDescriptor.push_back(val);
     }
-  // CHECK DISTMATCHING FUCNTION. TAKING 0-4 4-8 8-12 . looping needs to change . 
+    // CHECK DISTMATCHING FUCNTION. TAKING 0-4 4-8 8-12 . looping needs to change . 
     int eSize = epiDescriptor.size();
     int sSize = svcDescriptor.size();
     for(int i=0;i<eSize-scores2pick;i++){
@@ -189,22 +259,22 @@ void testFunction(string epiName){
         for(int j=0;j<frameSkipWindow-1;j++){
             int currDiff=0;
             for(int k=0;k<scores2pick;k++){
-                    uint64_t epiS = epiDescriptor[i+k];
-                    int svcIndex = j+k*(frameSkipWindow-1);
-                    uint64_t svcS = svcDescriptor[svcIndex];
-                    uint64_t diffBits=svcS^epiS;
-                    bitset<64>nos(diffBits);
-                    currDiff+=nos.count();
-                    cout<<epiS<<" "<<svcS<<" "<<nos.count()<<endl;
-                    imshow("EPI1",epiVector[i+k]);
-                    imshow("EPI2",epiVector[i+k+1]);
-                    imshow("SVC1",svcVector[svcIndex]);
-                    imshow("SVC2",svcVector[svcIndex+frameSkipWindow-1]);
-                    waitKey(0);
+                uint64_t epiS = epiDescriptor[i+k];
+                int svcIndex = j+k*(frameSkipWindow-1);
+                uint64_t svcS = svcDescriptor[svcIndex];
+                uint64_t diffBits=svcS^epiS;
+                bitset<64>nos(diffBits);
+                currDiff+=nos.count();
+                cout<<epiS<<" "<<svcS<<" "<<nos.count()<<endl;
+                imshow("EPI1",epiVector[i+k]);
+                imshow("EPI2",epiVector[i+k+1]);
+                imshow("SVC1",svcVector[svcIndex]);
+                imshow("SVC2",svcVector[svcIndex+frameSkipWindow-1]);
+                waitKey(0);
             }
-                cout<<currDiff<<" BEST "<<minBitDiff<<endl;
-                if(currDiff<minBitDiff)
-                    minBitDiff = currDiff;
+            cout<<currDiff<<" BEST "<<minBitDiff<<endl;
+            if(currDiff<minBitDiff)
+                minBitDiff = currDiff;
         }
     }
 }
@@ -226,24 +296,35 @@ void processEpi(string epiName){
     int prev_num=0;
     Mat prevFrame;
     int W,H;
+    init+="E";
     while(true){
         bm_video>>frame;
         if(frame.empty())
             break;
-        if(frame_num!=0 && frame_num>=38483){
+        /*if(frame_num >= 38596 && frame_num<=38625){
+          Mat re_frame;
+          resize(frame,re_frame,Size(sW,sH));
+          uint64_t val = BMFeatureExtractor(re_frame,prevFrame);
+          prevFrame = re_frame.clone();
+        //edgeMap(re_frame);
+
+        }*/
+        if(frame_num!=0){
             Mat re_frame;
-            resize(frame,re_frame,Size(W,H));
-            uint64_t val = BMFeatureExtractor(re_frame,prevFrame);
-            if(val!=0 && frame_num){
-            edgeMap(prevFrame);
-            prevFrame = re_frame.clone();
-            f<<prev_num<<" "<<val<<endl;
-            prev_num=frame_num;
+            resize(frame,re_frame,Size(eW,eH));
+            uint64_t val = BMFeatureExtractor(prevFrame,re_frame);
+            if(val!=0){
+                //edgeMap(prevFrame);
+                prevFrame = re_frame.clone();
+                f<<prev_num<<" "<<val<<endl;
+                prev_num=frame_num;
             }
-        }else{
+        }
+        else{
             H=frame.rows/2;
             W=frame.cols/2;
-            resize(frame,prevFrame,Size(W,H));
+            resize(frame,prevFrame,Size(eW,eH));
+          //  prevFrame = frame.clone();
         }
         frame_num++;
     }
@@ -269,14 +350,18 @@ void processSVC(string svcName){
         if(frame.empty())
             break;
         frame_num++;
-        if(frame_num>=2)
-           val = BMFeatureExtractor(frame,prevFrame);
+        if(frame_num>=2){
+            resize(frame,frame,Size(sW,sH));
+            val = BMFeatureExtractor(frame,prevFrame);
+        }
         else{
-            svcVector.push_back(frame);
+            resize(frame,frame,Size(sW,sH));
+            svcVector.push_back(frame.clone());
             prevFrame = frame.clone();
         }
         if(val!=0){
-            edgeMap(prevFrame);
+            //edgeMap(prevFrame);
+            //opticalFlowHistogram(prevFrame,frame);
             prevFrame = frame.clone();
             svcVector.push_back(frame);
             svcDescriptor.push_back(val);
@@ -285,7 +370,7 @@ void processSVC(string svcName){
     }
     f.close();
     cout<<"Frames in SVC:"<<frame_num<<endl;
-//    scores2pick = (frame_num/(frameSkipWindow-1))-1;
+    //    scores2pick = (frame_num/(frameSkipWindow-1))-1;
     scores2pick = svcDescriptor.size();
     cout<<scores2pick<<":Scores 2 pick\n";
 }
@@ -309,7 +394,7 @@ void EpiSvcBMDistance(string epiName,string svcName){
     string matchOutFile = name2write(epiName)+name2write(svcName);
     matchOutFile += "_Score_BinMotion.txt";
     cout<<"Scores Written to "<<matchOutFile<<endl;
-     
+
     string fileName = name2write(epiName);
     fileName ="./TEXTRESULTS/"+fileName+ "_BinMotion.txt";
     cout<<fileName<<endl;
@@ -333,16 +418,16 @@ void EpiSvcBMDistance(string epiName,string svcName){
         Qdelta.push(deltaNos);
         picked++;
         if(picked==scores2pick){
-                int currDiff=0;
-                for(int j=0;j<scores2pick;j++){
-                    uint64_t epiS = QscoreEPI.front();
-                    QscoreEPI.pop();
-                    QscoreEPI.push(epiS);
-                    uint64_t svcS = svcDescriptor[j];
-                    uint64_t diffBits=svcS^epiS;
-                    bitset<64>nos(diffBits);
-                    currDiff+=nos.count();
-                }
+            int currDiff=0;
+            for(int j=0;j<scores2pick;j++){
+                uint64_t epiS = QscoreEPI.front();
+                QscoreEPI.pop();
+                QscoreEPI.push(epiS);
+                uint64_t svcS = svcDescriptor[j];
+                uint64_t diffBits=svcS^epiS;
+                bitset<64>nos(diffBits);
+                currDiff+=nos.count();
+            }
             int deltaFront = Qdelta.front();
             BinMotionScore.push(make_pair(deltaFront,currDiff));
             QscoreEPI.pop();
@@ -360,53 +445,54 @@ void EpiSvcBMDistance(string epiName,string svcName){
             selected_Frames_BinMotion[sFrame]=1;
             thresh_selected++;
         }
-       o<<sFrame<<" "<<sScore<<endl;
-       BinMotionScore.pop();
+        o<<sFrame<<" "<<sScore<<endl;
+        BinMotionScore.pop();
     }
-        o.close();
+    o.close();
 }
 
 
-    void viewSelection(string epiName){
-        VideoCapture bm_video;
-        bm_video.open(epiName);
+void viewSelection(string epiName){
+    VideoCapture bm_video;
+    bm_video.open(epiName);
 
-        if(!bm_video.isOpened())
-            return;
-        Mat frame;
-        int frame_num=0;
-        while(true){
-            bm_video>>frame;
-            if(frame.empty())
-                break;
-            if(selected_Frames_BinMotion[frame_num]){
-                imshow("selected",frame);
-                waitKey(0);
-            }
-            frame_num++;
+    if(!bm_video.isOpened())
+        return;
+    Mat frame;
+    int frame_num=0;
+    while(true){
+        bm_video>>frame;
+        if(frame.empty())
+            break;
+        if(selected_Frames_BinMotion[frame_num]){
+            imshow("selected",frame);
+            waitKey(0);
         }
+        frame_num++;
     }
+}
 
 /*0 index working. First frame of SVC is numbered 0. First frame of Epi is numbered 0. Epi are taken from 0-4, 4-8, 8-12
  * so on.svc Desc are computed for 0-4,1-5,2-6 so on. Now during comparision, Taking scores2pick nos of epiDesc svcDesc
  * are scored. EpiDes[0,1,2,...score2pick] vs for i=0 to 3:svcDesc(0+i,4+i,8+i,..,end)*/
-    int main(int argc, char*argv[]){
-        if(argc != 4){
-            cout<<"eg: ./exec episodeName svcName DIVISIONS\n";
-            return 0;
-        }
-        string epiName(argv[1]);
-        string svcName(argv[2]);
-
-        frameSkipWindow = 5;   // frames to skip per VIDEO
-
-        stringstream ss;
-        ss<<argv[3];
-        ss>>DIVISION;
-
-             processSVC(svcName);
-             processEpi(epiName);
-         //   testFunction(epiName);
-         //    EpiSvcBMDistance(epiName,svcName);
-        //viewSelection(epiName);
+int main(int argc, char*argv[]){
+    if(argc != 4){
+        cout<<"eg: ./exec episodeName svcName DIVISIONS\n";
+        return 0;
     }
+    string epiName(argv[1]);
+    string svcName(argv[2]);
+
+    frameSkipWindow = 5;   // frames to skip per VIDEO
+
+    stringstream ss;
+    ss<<argv[3];
+    ss>>DIVISION;
+
+   // processEpi(epiName);
+    processSVC(svcName);
+    //    testEdgeCriteria();
+    //   testFunction(epiName);
+    EpiSvcBMDistance(epiName,svcName);
+    //viewSelection(epiName);
+}
