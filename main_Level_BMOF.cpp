@@ -43,7 +43,9 @@ bool selected_Frames[10000000];
 int DIVISION ;
 int scores2pick;
 
-
+//** PERCENTAGE FRAMES TO PICK
+int percentSelection = 25;
+map<int,int> index_BMs;
 
 //** OPTICAL FLOW HISTOGRAM SETTING
 double pyr_scale = 0.5;
@@ -57,6 +59,8 @@ float PI = 3.14159265;
 //** NOT REQUIRED
 int frameSkipWindow;
 
+//** ONLINE OPTICAL FLOW TESTING
+vector<int>EPI_frames2pick;
 
 
 //** FOR EDGE RELATED TESTING
@@ -123,7 +127,7 @@ void testEdgeCriteria(){
 
 void opticalFlowHistogram(Mat img_prev, Mat img_next,vector<float>&OpticalFlowHistogram){
     int binDelta = 225;
-    double thresh = 1.5;
+    double thresh = 1.0;
     double Nos=0;
     Mat img_prev_g,img_next_g;
     cvtColor(img_prev,img_prev_g,CV_BGR2GRAY);
@@ -162,9 +166,9 @@ void opticalFlowHistogram(Mat img_prev, Mat img_next,vector<float>&OpticalFlowHi
             }else
                       OpticalFlowHistogram[(binVal/2)%8]+=1;
 
-           // line(newDummy,p1,p2,Scalar(255,0,0),1,4,0);
-           // circle(newDummy,p2,2,Scalar(255,0,0),1,8,0);
-            //circle(newDummy,p2,2,Scalar(255,0,0),1,8,0);
+              line(newDummy,p1,p2,Scalar(255,0,0),1,4,0);
+              circle(newDummy,p2,2,Scalar(255,0,0),1,8,0);
+              circle(newDummy,p2,2,Scalar(255,0,0),1,8,0);
             }
         }
     }
@@ -174,9 +178,9 @@ void opticalFlowHistogram(Mat img_prev, Mat img_next,vector<float>&OpticalFlowHi
        // cout<<i%8<<"->"<<OpticalFlowHistogram[i]<<"   ";
     }
       //cout<<endl;
-      //imshow("prev",img_prev);
-      //imshow("next",newDummy);
-      //waitKey(0);
+       imshow("prev",img_prev);
+        imshow("next",newDummy);
+        waitKey(0);
 }
 
 void edgeMap(Mat &img){
@@ -375,6 +379,7 @@ void processEpi(string epiName){
                 of<<endl;
                 prevFrame = re_frame.clone();
                 f<<prev_num<<" "<<val<<endl;
+                EPI_frames2pick.push_back(prev_num);
                 prev_num=frame_num;
             }
         }
@@ -491,6 +496,8 @@ void Level_BM(string epiName,string svcName){
     queue<uint64_t>QscoreEPI; 
     queue<int>Qdelta;
     int picked=0;
+
+
     while(f.good()){
         string line,ofLine;
         getline(f,line);
@@ -604,7 +611,6 @@ void Level_BM_OF(string epiName,string svcName){
 
     vector<pair<int, double> >thresh_BMs;
     priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_BMs;
-    map<int,int> index_BMs;
     int num_BMs=0;
 
     queue<Mat>QoFlow;
@@ -862,6 +868,118 @@ void Level_BMOF(string epiName,string svcName){
     FinalEVAL(epiName,svcName,"_Score_BMOF");
 }
 
+void Level_ONLINE_COMPUTE_OF(vector<int>&BM_Selected, string epiName){
+
+    priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_OFs;
+    sort(BM_Selected.begin(),BM_Selected.end()); 
+    int idx = 0;
+
+    VideoCapture bm_video;
+    bm_video.open(epiName);
+
+    if(!bm_video.isOpened())
+        return;
+    int frame_num=0;
+    int prev_num=0;
+    Mat prevFrame;
+    int W,H;
+
+    vector<float>OFHistogram(9,0.0);
+    queue<pair<int,double> ONLINE_OFs;
+    queue<Mat> EPI_framesProcess;
+    while(true){
+        Mat frame;
+        bm_video>>frame;
+        if(frame.empty())
+            break;
+        EPI_framesProcess.push_back(frame);
+        if(EPI_framesProcess.size()==scores2pick+1){
+        }
+        frame_num++;
+    }
+    cout<<"Frame in Video :"<<frame_num<<endl;
+    of.close();
+    f.close();
+
+}
+
+void Level_BM_ONLINE_OF(string epiName, string svcName){
+    int svcDSize =svcDescriptor.size();
+    fstream f;
+
+    string fileName = name2write(epiName);
+    fileName ="./TEXTRESULTS/"+fileName+ "_BinMotion.txt";
+    cout<<fileName<<" "<<endl;
+    f.open(fileName,fstream::in);
+
+    priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_BMs;
+
+    vector<int> vec_BMs;
+
+    queue<uint64_t>QscoreEPI; 
+    queue<int>Qdelta;
+    int picked=0;
+    int num_BMs = 0;
+    while(f.good()){
+        string line,ofLine;
+        getline(f,line);
+        getline(of,ofLine);
+        stringstream ss, ofss;
+        int deltaNos;
+        uint64_t val;//strtoul(line.c_str(),NULL,0);
+        ss<<line;
+        ss>>deltaNos;
+        ss>>val;
+        QscoreEPI.push(val);
+        Qdelta.push(deltaNos);
+        picked++;
+        if(picked==scores2pick){
+            float BM_Score=0;
+            double OF_Score=0;
+            for(int j=0;j<scores2pick;j++){
+                //** BINARY MOTION 
+                uint64_t epiS = QscoreEPI.front();
+                QscoreEPI.pop();
+                QscoreEPI.push(epiS);
+                uint64_t svcS = svcDescriptor[j];
+                uint64_t diffBits=svcS^epiS;
+                bitset<64>nos(diffBits);
+                BM_Score+=nos.count();
+            }
+            float normaliser = DIVISION*DIVISION*picked;
+            int deltaFront = Qdelta.front();
+            index_BMs[deltaFront]=num_BMs;
+            num_BMs++;
+            PQ_BMs.push(make_pair(deltaFront,BM_Score/normaliser));
+            QscoreEPI.pop();
+            Qdelta.pop();
+            picked--;
+        }
+    }
+    f.close();
+  
+    int thresh_selected=0;
+    int thresh = (selectionPercent*PQ_BMs.size())/100;
+    float last_score_val=-1;
+    cout<<"OFSIZE:"<<PQ_BMs.size()<<" "<<thresh<<endl;
+    
+    while(!PQ_BMs.empty()){
+        int FID = PQ_BMs.top().first;
+        float sScore = PQ_BMs.top().second;
+        if(thresh_selected <= thresh){
+            vec_BMs.push_back(FID);
+            thresh_selected++;
+            last_score_val = sScore; 
+        }else{
+            if(last_score_val == sScore){
+            vec_BMs.push(FID);
+            }
+        }
+        PQ_BMs.pop();
+    }
+  //  FinalEVAL(epiName,svcName,"_Score_BM_OF");
+
+}
 
 void viewSelection(string epiName){
     VideoCapture bm_video;
@@ -901,11 +1019,12 @@ int main(int argc, char*argv[]){
     ss>>DIVISION;
      // processEpi(epiName);
         processSVC(svcName);
+     //   Level_BMOF(epiName,svcName);
      //   Level_BM(epiName,svcName);
      //     Level_OF(epiName,svcName);
     //    testEdgeCriteria();
     //   testFunction(epiName);
      //  Level_OF_BM(epiName,svcName);
-       Level_BM_OF(epiName,svcName);
+     //  Level_BM_OF(epiName,svcName);
     //viewSelection(epiName);
 }
