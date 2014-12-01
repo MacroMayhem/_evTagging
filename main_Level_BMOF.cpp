@@ -45,7 +45,6 @@ int scores2pick;
 
 //** PERCENTAGE FRAMES TO PICK
 int percentSelection = 25;
-map<int,int> index_BMs;
 
 //** OPTICAL FLOW HISTOGRAM SETTING
 double pyr_scale = 0.5;
@@ -59,8 +58,8 @@ float PI = 3.14159265;
 //** NOT REQUIRED
 int frameSkipWindow;
 
-//** ONLINE OPTICAL FLOW TESTING
-vector<int>EPI_frames2pick;
+//** INDEX OF BM SELECTED FRAME IN THE VECTOR
+map<int,bool>EPI_frames_key;
 
 
 //** FOR EDGE RELATED TESTING
@@ -99,7 +98,7 @@ string name2write(string filePath){
 }
 
 void testEdgeCriteria(){
-    int s=edgeTestSVC.size(),e=edgeTestEPI.size();
+    /*int s=edgeTestSVC.size(),e=edgeTestEPI.size();
 
     Size sz = Size(128,128);
     string E="E",S="S";
@@ -121,7 +120,7 @@ void testEdgeCriteria(){
         imwrite(path.c_str(),edgeTestEPI[i]);
         // imshow("epi",edgeTestEPI[i]);
         // waitKey(0);
-    }
+    }*/
 }
 
 
@@ -184,7 +183,7 @@ void opticalFlowHistogram(Mat img_prev, Mat img_next,vector<float>&OpticalFlowHi
 }
 
 void edgeMap(Mat &img){
-    Mat img2;
+  /*  Mat img2;
     GaussianBlur( img, img2, Size(3,3), 0, 0, BORDER_DEFAULT );
     Mat img_g;
     cvtColor(img2,img_g,CV_BGR2GRAY);
@@ -216,7 +215,7 @@ void edgeMap(Mat &img){
         edgeTestSVC.push_back(grad);
     else
         edgeTestEPI.push_back(grad);
-
+*/
     // imshow("Main",grad);
     // for(int i=0;i<DIVISION*DIVISION;i++){
     //ss<<i;
@@ -267,7 +266,7 @@ uint64_t BMFeatureExtractor(Mat &m1,Mat &m2){
 }
 
 void testFunction(string epiName){
-    VideoCapture epiVideo;
+   /* VideoCapture epiVideo;
     epiVideo.open(epiName);
     int frame_num=0;
     Mat prevFrame;
@@ -327,7 +326,7 @@ void testFunction(string epiName){
             if(currDiff<minBitDiff)
                 minBitDiff = currDiff;
         }
-    }
+    }*/
 }
 
 void processEpi(string epiName){
@@ -352,7 +351,6 @@ void processEpi(string epiName){
     int prev_num=0;
     Mat prevFrame;
     int W,H;
-    init+="E";
     vector<float>OFHistogram(9,0.0);
     while(true){
         bm_video>>frame;
@@ -379,7 +377,7 @@ void processEpi(string epiName){
                 of<<endl;
                 prevFrame = re_frame.clone();
                 f<<prev_num<<" "<<val<<endl;
-                EPI_frames2pick.push_back(prev_num);
+                EPI_frames_key[prev_num]=1;
                 prev_num=frame_num;
             }
         }
@@ -612,6 +610,8 @@ void Level_BM_OF(string epiName,string svcName){
     vector<pair<int, double> >thresh_BMs;
     priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_BMs;
     int num_BMs=0;
+
+    map<int,int>index_BMs;
 
     queue<Mat>QoFlow;
     queue<uint64_t>QscoreEPI; 
@@ -868,63 +868,120 @@ void Level_BMOF(string epiName,string svcName){
     FinalEVAL(epiName,svcName,"_Score_BMOF");
 }
 
-void Level_ONLINE_COMPUTE_OF(vector<int>&BM_Selected, string epiName){
-
-    priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_OFs;
-    sort(BM_Selected.begin(),BM_Selected.end()); 
-    int idx = 0;
-
+void Level_ONLINE_COMPUTE_OF(vector<int>&vec_BMs, string epiName){
     VideoCapture bm_video;
     bm_video.open(epiName);
+    
+    sort(vec_BMs.begin(),vec_BMs.end());
 
-    if(!bm_video.isOpened())
-        return;
     int frame_num=0;
-    int prev_num=0;
-    Mat prevFrame;
-    int W,H;
-
-    vector<float>OFHistogram(9,0.0);
-    queue<pair<int,double> ONLINE_OFs;
-    queue<Mat> EPI_framesProcess;
+    int fid = 0;
+    bool FidInit = false;
+    queue<int>indices_under_process;
+    queue<Mat>mat_under_process;
     while(true){
-        Mat frame;
-        bm_video>>frame;
-        if(frame.empty())
+        Mat b_frame;
+         bm_video >> b_frame;
+        if(b_frame.empty())
             break;
-        EPI_framesProcess.push_back(frame);
-        if(EPI_framesProcess.size()==scores2pick+1){
+        
+        if(indices_under_process.size() == scores2pick+1){
+            //** EVALUATE CORRELATION OR SOMETHING ON THE DISTANCE STUFF
+            fid++;
+            while(!indices_under_process.empty()){
+                if(vec_BMs[fid]==indices_under_process.front()){
+                    break;
+                }
+                indices_under_process.pop();
+            }
+            if(indices_under_process.size()==0){
+                FidInit = false;
+            }
+        }
+        if(mat_under_process.size() < scores2pick+1){
+            if(frame_num == vec_BMs[fid]){
+                FidInit = true;
+                Mat res_frame;
+                resize (b_frame,res_frame,Size(eW,eH));
+                mat_under_process.push(res_frame);
+            }
+            else{
+                if(FidInit && EPI_frames_key[frame_num]){
+                Mat res_frame;
+                resize (b_frame,res_frame,Size(eW,eH));
+                mat_under_process.push(res_frame);
+                }
+            }
         }
         frame_num++;
     }
-    cout<<"Frame in Video :"<<frame_num<<endl;
-    of.close();
-    f.close();
+}
 
+void BM_COMPUTE(string epiName,priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>&PQ_BMs){
+    fstream f;
+    string fileName = name2write(epiName);
+    fileName ="./TEXTRESULTS/"+fileName+ "_BinMotion.txt";
+    cout<<fileName<<" "<<endl;
+    f.open(fileName,fstream::in);
+    
+    vector<int> vec_BMs;
+    queue<uint64_t>QscoreEPI; 
+    queue<int>Qdelta;
+    int picked=0;
+
+
+    while(f.good()){
+        string line;
+        getline(f,line);
+        stringstream ss;
+        int deltaNos;
+        uint64_t val;
+        ss<<line;
+        ss>>deltaNos;
+        ss>>val;
+        QscoreEPI.push(val);
+        Qdelta.push(deltaNos);
+        picked++;
+        if(picked==scores2pick){
+            float BM_Score=0;
+            double OF_Score=0;
+            for(int j=0;j<scores2pick;j++){
+                //** BINARY MOTION 
+                uint64_t epiS = QscoreEPI.front();
+                QscoreEPI.pop();
+                QscoreEPI.push(epiS);
+                uint64_t svcS = svcDescriptor[j];
+                uint64_t diffBits=svcS^epiS;
+                bitset<64>nos(diffBits);
+                BM_Score+=nos.count();
+            }
+            float normaliser = DIVISION*DIVISION*picked;
+            int deltaFront = Qdelta.front();
+            PQ_BMs.push(make_pair(deltaFront,BM_Score/normaliser));
+            QscoreEPI.pop();
+            Qdelta.pop();
+            picked--;
+        }
+    }
+    f.close();
 }
 
 void Level_BM_ONLINE_OF(string epiName, string svcName){
-    int svcDSize =svcDescriptor.size();
     fstream f;
-
     string fileName = name2write(epiName);
     fileName ="./TEXTRESULTS/"+fileName+ "_BinMotion.txt";
     cout<<fileName<<" "<<endl;
     f.open(fileName,fstream::in);
 
     priority_queue<pair<int,double>,vector<pair<int,double> >,comparePQ>PQ_BMs;
-
     vector<int> vec_BMs;
-
     queue<uint64_t>QscoreEPI; 
     queue<int>Qdelta;
     int picked=0;
-    int num_BMs = 0;
     while(f.good()){
-        string line,ofLine;
+        string line;
         getline(f,line);
-        getline(of,ofLine);
-        stringstream ss, ofss;
+        stringstream ss;
         int deltaNos;
         uint64_t val;//strtoul(line.c_str(),NULL,0);
         ss<<line;
@@ -948,8 +1005,6 @@ void Level_BM_ONLINE_OF(string epiName, string svcName){
             }
             float normaliser = DIVISION*DIVISION*picked;
             int deltaFront = Qdelta.front();
-            index_BMs[deltaFront]=num_BMs;
-            num_BMs++;
             PQ_BMs.push(make_pair(deltaFront,BM_Score/normaliser));
             QscoreEPI.pop();
             Qdelta.pop();
@@ -959,7 +1014,7 @@ void Level_BM_ONLINE_OF(string epiName, string svcName){
     f.close();
   
     int thresh_selected=0;
-    int thresh = (selectionPercent*PQ_BMs.size())/100;
+    int thresh = (percentSelection*PQ_BMs.size())/100;
     float last_score_val=-1;
     cout<<"OFSIZE:"<<PQ_BMs.size()<<" "<<thresh<<endl;
     
@@ -972,7 +1027,7 @@ void Level_BM_ONLINE_OF(string epiName, string svcName){
             last_score_val = sScore; 
         }else{
             if(last_score_val == sScore){
-            vec_BMs.push(FID);
+            vec_BMs.push_back(FID);
             }
         }
         PQ_BMs.pop();
